@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import FastAPI,Depends,HTTPException,Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .database import Base,engine,session
+from .database import Base,engine,session,Session
 from .models import User,Audit
 from .schemas import Login
 from .auth import current,hash_password,issue
@@ -15,6 +15,7 @@ from .survey_routes import router as surveys
 from .mission_routes import router as missions
 from .revisit_routes import router as revisits
 from .operations_routes import router as operations
+from .batch_routes import router as batches
 queue=redis.Redis.from_url(os.getenv('REDIS_URL','redis://redis:6379/0'),decode_responses=True)
 @asynccontextmanager
 async def lifespan(app):
@@ -24,6 +25,10 @@ async def lifespan(app):
             from scripts.seed_demo import seed
             seed()
         except Exception:logging.exception('seed failed')
+    try:
+        from . import batch_service
+        with Session() as db:batch_service.resume_activations(db,queue)
+    except Exception:logging.exception('resume failed')
     yield
 app=FastAPI(title='晴岭 · 光伏积灰清洗排程',lifespan=lifespan)
 app.add_middleware(CORSMiddleware,allow_origins=['http://localhost:18223'],allow_methods=['*'],allow_headers=['*'])
@@ -45,4 +50,4 @@ def login(body:Login,db=Depends(session)):
     return {'token':issue(user),'email':user.email,'role':user.role}
 @app.get('/audits')
 def audits(user=Depends(current),db=Depends(session)):return db.scalars(select(Audit).order_by(Audit.id.desc()).limit(50)).all()
-app.include_router(arrays);app.include_router(surveys);app.include_router(missions);app.include_router(revisits);app.include_router(operations)
+app.include_router(arrays);app.include_router(surveys);app.include_router(missions);app.include_router(revisits);app.include_router(operations);app.include_router(batches)

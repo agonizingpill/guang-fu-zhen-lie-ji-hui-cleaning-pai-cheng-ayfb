@@ -26,3 +26,13 @@ class WaterRevision(BaseModel):
 class RetestInput(BaseModel):
     post_kw:float=Field(gt=0,le=10000)
     post_irradiance:float=Field(ge=350,le=1400)
+class SampleRow(BaseModel):
+    capacity_kw:float=Field(gt=0,le=10000)
+    irradiance:float=Field(gt=0,le=1400)
+    module_temp:float=Field(ge=-20,le=85)
+    slope:float=Field(ge=0,le=60)
+    clean_kw:float=Field(ge=0,le=10000)
+class BatchInput(BaseModel):
+    code:str=Field(min_length=1,max_length=60)
+    note:str=Field(default='',max_length=240)
+    samples:list[SampleRow]=Field(min_length=40,max_length=5000)

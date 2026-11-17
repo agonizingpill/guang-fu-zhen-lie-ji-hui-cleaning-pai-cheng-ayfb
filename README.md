@@ -40,7 +40,19 @@ docker compose up -d --build --wait
 
 160训练 / 40留出，train_test_split random_state42；RandomForestRegressor 100树、max_depth8、min_samples_leaf2、random_state42。训练MAE和独立留出MAE分开返回，不能把训练误差当泛化指标。模型不使用实测observed_kw作特征；积灰损失=max(0,预测clean_kw−observed_kw)。目测积灰和无雨日用于业务参考，积灰目测参与建议水量，不被伪装成模型特征。
 
-标定适用范围：容量80–150kW、辐照350–1050W/m²、组件温度18–65°C、坡度10–35°。超范围拒评而转人工复核。输入量与模型证据SHA256、训练/留出样本数、特征重要性写入survey.model_evidence，worker同时向共享artifacts卷写JSON。Redis队列由Python worker消费，前端只展示结果。
+标定适用范围：容量80–150kW、辐照350–1050W/m²、组件温度18–65°C、坡度10–35°。超范围拒评而转人工复核。输入量与模型证据SHA256、训练/留出样本数、特征重要性写入survey.model_evidence，worker同时向共享artifacts卷写JSON。Redis队列（估损`solar:assessment`、训练`solar:training`）由Python worker消费，前端只展示结果。
+
+## 参考批次训练、比较与启用
+
+清洁功率参考样本按批次管理（`ModelBatch`）：登记样本→worker异步训练→候选→主管启用→现用，另有failed/superseded终态。训练沿用同一口径（80/20、random_state=42的冻结留出集），留出样本不参与训练；候选的留出MAE与现用模型在同一冻结留出集上重算的MAE并列展示，供启用前比较。训练失败只标记本批次failed并保留现用版本；修复样本后可重新训练。
+
+启用以主管操作提交为界，与评估、派工并发时：
+
+- 估损写入全程持有模型指针行锁，启用事务亦先取该锁，两者串行；旧纪元的计算不可能晚于启用提交落库，此前落库的旧估损被同一启用事务扫入重算，晚回不得覆盖。
+- 同一事务内，未派工巡测（assessed）的旧估损置为evaluating并重算入队；已派工（scheduled及以后）的巡测与任务保留原模型依据，水量账目不受启用影响。
+- 启用提交后若重算入队中断，批次停留在activating，后端启动或重试启用时续办：补投全部待评估巡测后转active。重试不会重复切换（纪元只增一次）也不会重复扣水（启用不触碰水量，扣减仍仅由派工事务执行）。任一时刻仅一个批次可处于启用中。
+
+每条估损的model_evidence记录批次编号、纪元、留出误差与样本SHA256；巡测簿与损失优先序页展示该依据，"参考批次与模型"页查看批次状态、误差对比与现用版本。接口：`GET/POST /model-batches`、`POST /model-batches/{id}/train`（失败重训，计划员/主管）、`POST /model-batches/{id}/activate`（仅主管）。seed内置RB-BASE-2026（现用，200条seed42样本）与RB-DEMO-2027（候选，seed43同口径模拟）供演示比较与启用。
 
 复测归一化功率=`post_kw * survey.irradiance / post_irradiance`；实测增益=归一化功率−清洗前observed_kw。复测辐照至少350W/m²，功率不得超过额定120%；收益不大于0时拒绝验收，可排查后补测。
 
@@ -57,15 +69,15 @@ docker compose up -d --build --wait
 7. 14:00 现场复测110kW、800W/m²，归一化增益22kW；未复测不得验收。
 8. 16:00 主管验收，阵列恢复可巡检，旧读数失效；观察员查闭环和水量账。
 
-Seed按email、阵列code、巡测code自然键仅插入缺项，不覆盖用户改动；4阵列、4巡测、3账号，另含一条历史已验收清洗、一条第2天复访和一条待收补给单；200条参考样本作为只读模型fixture。
+Seed按email、阵列code、巡测code自然键仅插入缺项，不覆盖用户改动；4阵列、4巡测、3账号，另含一条历史已验收清洗、一条第2天复访和一条待收补给单；200条参考样本作为只读模型fixture，并生成现用批次RB-BASE-2026与候选批次RB-DEMO-2027。
 
 ## 工程、目录与开发
 
 Python3.12 / FastAPI / SQLAlchemy / PyMySQL / MySQL8 / Redis7 / scikit-learn1.6 / Nginx1.27。前端原生HTML/CSS/JS ES modules，无框架。
 
 - backend/src/models.py：三领域实体及审计/账号；schemas.py输入验证；array_routes、survey_routes、mission_routes为领域接口。
-- field_service.py：阵列规格/巡测规则、估损入队；wash_service.py：用水计划/事务派工/复测/验收联动；power_model.py：参考训练与评估；worker.py：估损消费与心跳；scripts/seed_demo.py幂等seed。
-- frontend/src/pages/：阵列图、巡测簿、损失与水量、派工复测及补给/复访六页；components/field.js复用阵列命名、巡测依据、水量账与状态。api.js、store.js、utils.js分离请求、领域状态、格式/时区/错误反馈。
+- field_service.py：阵列规格/巡测规则、估损入队；wash_service.py：用水计划/事务派工/复测/验收联动；power_model.py：批次训练与评估；batch_service.py/batch_routes.py：参考批次登记、训练、启用与中断恢复；worker.py：估损与训练消费及心跳；scripts/seed_demo.py幂等seed。
+- frontend/src/pages/：阵列图、巡测簿、损失与水量、参考批次、派工复测及补给/复访等业务页；components/field.js复用阵列命名、巡测依据、水量账与状态。api.js、store.js、utils.js分离请求、领域状态、格式/时区/错误反馈。
 - 角色、巡测状态、任务状态枚举分别在backend/src/constants.py、frontend/src/constants.js，角色值与账号一致。
 - app.py的trace与recover中间件负责耗时与全局可恢复错误；审计记录真实变更账号/动作/时间。UI显示Asia/Shanghai。
 

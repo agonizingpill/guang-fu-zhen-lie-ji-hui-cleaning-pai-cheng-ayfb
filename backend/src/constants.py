@@ -18,3 +18,10 @@ class MissionState(StrEnum):
     RETESTED='retested'
     ACCEPTED='accepted'
     SUPERSEDED='superseded'
+class BatchState(StrEnum):
+    TRAINING='training'
+    CANDIDATE='candidate'
+    FAILED='failed'
+    ACTIVATING='activating'
+    ACTIVE='active'
+    SUPERSEDED='superseded'

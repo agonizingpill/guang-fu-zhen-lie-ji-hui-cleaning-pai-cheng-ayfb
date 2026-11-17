@@ -7,7 +7,7 @@ from .auth import current,editor
 from .models import SoilingSurvey
 from .schemas import SurveyInput
 from .field_service import record_survey,queue_assessment,require
-from .power_model import train_reference
+from . import batch_service
 queue=redis.Redis.from_url(os.getenv('REDIS_URL','redis://redis:6379/0'),decode_responses=True)
 router=APIRouter()
 @router.get('/surveys')
@@ -19,4 +19,4 @@ def record(body:SurveyInput,user=Depends(editor),db=Depends(session)):return rec
 @router.post('/surveys/{key}/assess')
 def assess(key:int,user=Depends(editor),db=Depends(session)):return queue_assessment(db,key,user,queue)
 @router.get('/power-reference')
-def evidence(user=Depends(current)):return train_reference()[1]
+def evidence(user=Depends(current),db=Depends(session)):return batch_service.active_evidence(db)
